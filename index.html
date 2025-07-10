@@ -183,6 +183,24 @@
             cursor: not-allowed;
         }
 
+        .cache-indicator {
+            display: inline-block;
+            margin-left: 10px;
+            padding: 3px 8px;
+            background: #22c55e;
+            color: white;
+            border-radius: 5px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .api-status {
+            text-align: center;
+            margin-top: 10px;
+            font-size: 12px;
+            color: #888;
+        }
+
         @media (max-width: 480px) {
             body {
                 padding: 15px;
@@ -228,11 +246,14 @@
             <button class="refresh-btn" onclick="refreshPrices()">🔄 Aggiorna Prezzi</button>
             
             <div class="last-update" id="lastUpdate"></div>
+            <div class="api-status" id="apiStatus"></div>
         </div>
     </div>
 
     <script>
-        const API_KEY = 'FVT0S8TRMR64FHD3';
+        // URL del tuo Cloudflare Worker
+        // IMPORTANTE: Sostituisci questo con l'URL del tuo worker dopo il deploy
+        const WORKER_URL = 'https://stock-worker.franchionidavide.workers.dev/';
         
         const portfolio = {
             SPY: {
@@ -253,11 +274,26 @@
             }
         };
 
+        let dataFromCache = false;
+
         async function fetchStockPrice(symbol) {
-            const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${API_KEY}`;
-            
             try {
-                const response = await fetch(url);
+                // Usa il Worker invece di chiamare direttamente Alpha Vantage
+                const response = await fetch(`${WORKER_URL}?symbol=${symbol}`);
+                
+                if (!response.ok) {
+                    if (response.status === 429) {
+                        const error = await response.json();
+                        throw new Error(error.message || 'Limite API raggiunto');
+                    }
+                    throw new Error('Errore nel recupero dei dati');
+                }
+                
+                // Controlla se i dati vengono dalla cache
+                if (response.headers.get('X-Cache-Status') === 'HIT') {
+                    dataFromCache = true;
+                }
+                
                 const data = await response.json();
                 
                 if (data['Global Quote']) {
@@ -265,8 +301,6 @@
                         price: parseFloat(data['Global Quote']['05. price']),
                         lastUpdate: data['Global Quote']['07. latest trading day']
                     };
-                } else if (data['Note']) {
-                    throw new Error('Limite API raggiunto. Riprova tra qualche minuto.');
                 } else {
                     throw new Error('Dati non disponibili');
                 }
@@ -279,15 +313,16 @@
             const loadingEl = document.getElementById('loading');
             const errorEl = document.getElementById('error');
             const portfolioEl = document.getElementById('portfolio');
+            const apiStatusEl = document.getElementById('apiStatus');
             
             loadingEl.style.display = 'block';
             errorEl.style.display = 'none';
             portfolioEl.style.display = 'none';
+            dataFromCache = false;
             
             try {
-                // Fetch prezzi con un piccolo delay per evitare rate limiting
+                // Fetch prezzi senza delay (il Worker gestisce la cache)
                 const spyData = await fetchStockPrice('SPY');
-                await new Promise(resolve => setTimeout(resolve, 1000)); // 1 secondo di delay
                 const qqqmData = await fetchStockPrice('QQQM');
                 
                 // Aggiorna portfolio SPY
@@ -314,17 +349,49 @@
                 displayPortfolio(totalValue, totalCost, totalPnL, totalPnLPercent);
                 displayStocks();
                 
-                // Aggiorna timestamp
+                // Aggiorna timestamp e stato cache
                 const lastUpdateEl = document.getElementById('lastUpdate');
-                lastUpdateEl.textContent = `Ultimo aggiornamento: ${new Date().toLocaleString('it-IT')}`;
+                const now = new Date().toLocaleString('it-IT');
+                lastUpdateEl.innerHTML = `Ultimo aggiornamento: ${now}`;
+                
+                if (dataFromCache) {
+                    lastUpdateEl.innerHTML += '<span class="cache-indicator">CACHE</span>';
+                    apiStatusEl.textContent = 'Dati dalla cache di Cloudflare (aggiornati ogni 5 minuti)';
+                } else {
+                    apiStatusEl.textContent = 'Dati in tempo reale da Alpha Vantage';
+                }
                 
                 loadingEl.style.display = 'none';
                 portfolioEl.style.display = 'block';
+                
+                // Salva i dati nel localStorage per uso offline
+                localStorage.setItem('portfolioData', JSON.stringify({
+                    portfolio: portfolio,
+                    totalValue: totalValue,
+                    totalCost: totalCost,
+                    totalPnL: totalPnL,
+                    totalPnLPercent: totalPnLPercent,
+                    lastUpdate: now
+                }));
                 
             } catch (error) {
                 loadingEl.style.display = 'none';
                 errorEl.style.display = 'block';
                 errorEl.textContent = `Errore: ${error.message}`;
+                
+                // Prova a caricare dati offline se disponibili
+                const offlineData = localStorage.getItem('portfolioData');
+                if (offlineData) {
+                    const data = JSON.parse(offlineData);
+                    Object.assign(portfolio, data.portfolio);
+                    displayPortfolio(data.totalValue, data.totalCost, data.totalPnL, data.totalPnLPercent);
+                    displayStocks();
+                    portfolioEl.style.display = 'block';
+                    
+                    const lastUpdateEl = document.getElementById('lastUpdate');
+                    lastUpdateEl.innerHTML = `Dati offline dal: ${data.lastUpdate} <span class="cache-indicator" style="background: #f59e0b;">OFFLINE</span>`;
+                    apiStatusEl.textContent = 'Modalità offline - dati potrebbero non essere aggiornati';
+                }
             }
         }
 
@@ -396,6 +463,9 @@
 
         // Carica i dati all'avvio
         updatePortfolio();
+        
+        // Auto-refresh ogni 5 minuti
+        setInterval(updatePortfolio, 5 * 60 * 1000);
     </script>
 </body>
 </html>
