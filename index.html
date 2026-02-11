@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Portfolio Tracker - SPY & QQQM</title>
+    <title>Portfolio Tracker</title>
     <style>
         * {
             margin: 0;
@@ -235,17 +235,55 @@
         const API_KEY = 'CA79U22UATFIL1ZU';
         
         const portfolio = {
+            TSLA: {
+                shares: 3,
+                buyPrice: 442.53,
+                type: 'Stock',
+                currentPrice: 0,
+                value: 0,
+                pnl: 0,
+                pnlPercent: 0
+            },
             SPY: {
-                shares: 8,
-                buyPrice: 640.82,
+                shares: 6,
+                buyPrice: 674.45,
+                type: 'CFD',
                 currentPrice: 0,
                 value: 0,
                 pnl: 0,
                 pnlPercent: 0
             },
             QQQM: {
-                shares: 21,
-                buyPrice: 237.94,
+                shares: 16,
+                buyPrice: 251.25,
+                type: 'CFD',
+                currentPrice: 0,
+                value: 0,
+                pnl: 0,
+                pnlPercent: 0
+            },
+            NVDA: {
+                shares: 1,
+                buyPrice: 176.27,
+                type: 'Stock',
+                currentPrice: 0,
+                value: 0,
+                pnl: 0,
+                pnlPercent: 0
+            },
+            MSFT: {
+                shares: 1,
+                buyPrice: 412.63,
+                type: 'Stock',
+                currentPrice: 0,
+                value: 0,
+                pnl: 0,
+                pnlPercent: 0
+            },
+            IBKR: {
+                shares: 1.0176,
+                buyPrice: 57.98,
+                type: 'Stock',
                 currentPrice: 0,
                 value: 0,
                 pnl: 0,
@@ -285,28 +323,28 @@
             portfolioEl.style.display = 'none';
             
             try {
-                // Fetch prezzi con un piccolo delay per evitare rate limiting
-                const spyData = await fetchStockPrice('SPY');
-                await new Promise(resolve => setTimeout(resolve, 1000)); // 1 secondo di delay
-                const qqqmData = await fetchStockPrice('QQQM');
-                
-                // Aggiorna portfolio SPY
-                portfolio.SPY.currentPrice = spyData.price;
-                portfolio.SPY.value = portfolio.SPY.shares * portfolio.SPY.currentPrice;
-                const spyCost = portfolio.SPY.shares * portfolio.SPY.buyPrice;
-                portfolio.SPY.pnl = portfolio.SPY.value - spyCost;
-                portfolio.SPY.pnlPercent = (portfolio.SPY.pnl / spyCost) * 100;
-                
-                // Aggiorna portfolio QQQM
-                portfolio.QQQM.currentPrice = qqqmData.price;
-                portfolio.QQQM.value = portfolio.QQQM.shares * portfolio.QQQM.currentPrice;
-                const qqqmCost = portfolio.QQQM.shares * portfolio.QQQM.buyPrice;
-                portfolio.QQQM.pnl = portfolio.QQQM.value - qqqmCost;
-                portfolio.QQQM.pnlPercent = (portfolio.QQQM.pnl / qqqmCost) * 100;
-                
+                // Fetch prezzi con delay per evitare rate limiting (5 calls/min)
+                const symbols = Object.keys(portfolio);
+                for (let i = 0; i < symbols.length; i++) {
+                    const symbol = symbols[i];
+                    const data = await fetchStockPrice(symbol);
+                    portfolio[symbol].currentPrice = data.price;
+                    portfolio[symbol].value = portfolio[symbol].shares * portfolio[symbol].currentPrice;
+                    const cost = portfolio[symbol].shares * portfolio[symbol].buyPrice;
+                    portfolio[symbol].pnl = portfolio[symbol].value - cost;
+                    portfolio[symbol].pnlPercent = (portfolio[symbol].pnl / cost) * 100;
+                    if (i < symbols.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 13000));
+                    }
+                }
+
                 // Calcola totali
-                const totalValue = portfolio.SPY.value + portfolio.QQQM.value;
-                const totalCost = spyCost + qqqmCost;
+                let totalValue = 0;
+                let totalCost = 0;
+                symbols.forEach(symbol => {
+                    totalValue += portfolio[symbol].value;
+                    totalCost += portfolio[symbol].shares * portfolio[symbol].buyPrice;
+                });
                 const totalPnL = totalValue - totalCost;
                 const totalPnLPercent = (totalPnL / totalCost) * 100;
                 
@@ -332,11 +370,17 @@
             const totalInvestedEl = document.getElementById('totalInvested');
             const totalValueEl = document.getElementById('totalValue');
             const totalPnLEl = document.getElementById('totalPnL');
-            
-            // Mostra il capitale investito diviso per 2 con indicazione leva
-            totalInvestedEl.innerHTML = `$${(totalCost / 2).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span class="leverage-indicator">(Leva x2)</span>`;
+
+            // Calcola capitale reale: stock = costo pieno, CFD = costo / 2 (leva x2)
+            let realCapital = 0;
+            Object.values(portfolio).forEach(data => {
+                const cost = data.shares * data.buyPrice;
+                realCapital += data.type === 'CFD' ? cost / 2 : cost;
+            });
+
+            totalInvestedEl.innerHTML = `$${realCapital.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
             totalValueEl.textContent = `$${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-            
+
             const pnlClass = totalPnL >= 0 ? 'positive' : 'negative';
             const pnlSign = totalPnL >= 0 ? '+' : '';
             totalPnLEl.className = `total-pnl ${pnlClass}`;
@@ -346,16 +390,20 @@
         function displayStocks() {
             const stocksContainer = document.getElementById('stocks');
             stocksContainer.innerHTML = '';
-            
+
             Object.entries(portfolio).forEach(([symbol, data]) => {
                 const pnlClass = data.pnl >= 0 ? 'positive' : 'negative';
                 const pnlSign = data.pnl >= 0 ? '+' : '';
                 const cost = data.shares * data.buyPrice;
-                
+                const isCFD = data.type === 'CFD';
+                const investedCapital = isCFD ? cost / 2 : cost;
+                const typeLabel = isCFD ? ' <span class="leverage-indicator">CFD (Leva x2)</span>' : '';
+                const sharesDisplay = Number.isInteger(data.shares) ? data.shares : data.shares.toFixed(4);
+
                 const stockCard = `
                     <div class="stock-card">
                         <div class="stock-header">
-                            <div class="stock-symbol">${symbol}</div>
+                            <div class="stock-symbol">${symbol}${typeLabel}</div>
                             <div style="text-align: right;">
                                 <div style="font-size: 14px; color: #a3a3a3;">Valore:</div>
                                 <div style="font-size: 20px; font-weight: 600;">$${data.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
@@ -364,7 +412,7 @@
                         <div class="stock-details">
                             <div class="detail-row">
                                 <span>Quantità:</span>
-                                <span class="detail-value">${data.shares}</span>
+                                <span class="detail-value">${sharesDisplay}</span>
                             </div>
                             <div class="detail-row">
                                 <span>Prezzo di acquisto:</span>
@@ -376,7 +424,7 @@
                             </div>
                             <div class="detail-row">
                                 <span>Capitale investito:</span>
-                                <span class="detail-value">$${(cost / 2).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span class="leverage-indicator">(Leva x2)</span></span>
+                                <span class="detail-value">$${investedCapital.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${isCFD ? ' <span class="leverage-indicator">(Margine)</span>' : ''}</span>
                             </div>
                             <div class="pnl-row">
                                 <span>P&L:</span>
@@ -385,7 +433,7 @@
                         </div>
                     </div>
                 `;
-                
+
                 stocksContainer.innerHTML += stockCard;
             });
         }
