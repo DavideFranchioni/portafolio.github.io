@@ -210,7 +210,7 @@
     <div class="container">
         <h1>📈 Il Mio Portfolio</h1>
         
-        <div id="loading" class="loading">Caricamento prezzi...</div>
+        <div id="loading" class="loading">Caricamento prezzi...<br><span id="loadingProgress" style="font-size: 14px; color: #888;"></span></div>
         <div id="error" class="error" style="display: none;"></div>
         
         <div id="portfolio" style="display: none;">
@@ -296,15 +296,20 @@
             
             try {
                 const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`Errore HTTP: ${response.status}`);
+                }
                 const data = await response.json();
-                
-                if (data['Global Quote']) {
+
+                if (data['Global Quote'] && data['Global Quote']['05. price']) {
+                    const price = parseFloat(data['Global Quote']['05. price']);
+                    if (isNaN(price)) throw new Error(`Prezzo non valido per ${symbol}`);
                     return {
-                        price: parseFloat(data['Global Quote']['05. price']),
+                        price: price,
                         lastUpdate: data['Global Quote']['07. latest trading day']
                     };
-                } else if (data['Note']) {
-                    throw new Error('Limite API raggiunto. Riprova tra qualche minuto.');
+                } else if (data['Note'] || data['Information']) {
+                    throw new Error('Limite API raggiunto (max 25/giorno). Riprova piu tardi.');
                 } else {
                     throw new Error('Dati non disponibili');
                 }
@@ -325,8 +330,10 @@
             try {
                 // Fetch prezzi con delay per evitare rate limiting (5 calls/min)
                 const symbols = Object.keys(portfolio);
+                const progressEl = document.getElementById('loadingProgress');
                 for (let i = 0; i < symbols.length; i++) {
                     const symbol = symbols[i];
+                    progressEl.textContent = `${symbol} (${i + 1}/${symbols.length})...`;
                     const data = await fetchStockPrice(symbol);
                     portfolio[symbol].currentPrice = data.price;
                     portfolio[symbol].value = portfolio[symbol].shares * portfolio[symbol].currentPrice;
